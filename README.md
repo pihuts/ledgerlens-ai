@@ -2,7 +2,7 @@
 
 An n8n workflow that turns an uploaded invoice PDF into structured accounting data.
 
-![LedgerLens AI workflow](screenshots/LedgerLens%20AI.png)
+![LedgerLens AI opened in n8n](screenshots/n8n-editor.png)
 
 ## What it does
 
