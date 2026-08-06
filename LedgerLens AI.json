@@ -1,0 +1,276 @@
+{
+  "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+  "name": "LedgerLens AI - Invoice Data Extractor",
+  "nodes": [
+    {
+      "id": "invoice-sticky",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [0, -480],
+      "parameters": {
+        "width": 800,
+        "height": 220,
+        "content": "## LedgerLens AI\n\nUpload an invoice PDF, extract vendor, line items, totals, and payment terms with GPT-5.6 Luna, log it to Google Sheets, email a confirmation, and notify finance.\n\nReady to extend with image OCR, approval workflows, or ERP sync."
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "invoice-form",
+      "name": "Submit Invoice",
+      "type": "n8n-nodes-base.formTrigger",
+      "position": [-200, 0],
+      "parameters": {
+        "formTitle": "Invoice Upload",
+        "formDescription": "Upload an invoice PDF for automatic data extraction.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Your Email",
+              "requiredField": true
+            },
+            {
+              "fieldType": "file",
+              "fieldLabel": "Invoice_File",
+              "requiredField": true,
+              "acceptFileTypes": ".pdf"
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "invoice-extract",
+      "name": "Extract Text from PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "position": [0, 0],
+      "parameters": {
+        "options": {},
+        "operation": "pdf",
+        "binaryPropertyName": "Invoice_File"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "invoice-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [200, -220],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5.6-luna"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "invoice-parser",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [400, -220],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"vendor_name\":{\"type\":[\"string\",\"null\"]},\"vendor_email\":{\"type\":[\"string\",\"null\"]},\"vendor_address\":{\"type\":[\"string\",\"null\"]},\"invoice_number\":{\"type\":[\"string\",\"null\"]},\"invoice_date\":{\"type\":[\"string\",\"null\"]},\"due_date\":{\"type\":[\"string\",\"null\"]},\"currency\":{\"type\":[\"string\",\"null\"]},\"subtotal\":{\"type\":[\"number\",\"null\"]},\"tax\":{\"type\":[\"number\",\"null\"]},\"total\":{\"type\":[\"number\",\"null\"]},\"payment_terms\":{\"type\":[\"string\",\"null\"]},\"line_items\":{\"type\":[\"array\",\"null\"],\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"quantity\":{\"type\":\"number\"},\"unit_price\":{\"type\":\"number\"},\"amount\":{\"type\":\"number\"}},\"required\":[\"description\",\"quantity\",\"unit_price\",\"amount\"]}},\"notes\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"vendor_name\",\"vendor_email\",\"vendor_address\",\"invoice_number\",\"invoice_date\",\"due_date\",\"currency\",\"subtotal\",\"tax\",\"total\",\"payment_terms\",\"line_items\",\"notes\"]}"
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "invoice-chain",
+      "name": "Extract Invoice Data",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [200, 0],
+      "parameters": {
+        "text": "={{ $json.text }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a meticulous accounting automation assistant. Extract every requested invoice field from the text. Preserve exact invoice numbers, dates, currency, and amounts. For line items, extract each row with description, quantity, unit price, and amount. If a value is missing, use null. Never invent amounts or vendors. Return valid JSON only."
+            }
+          ]
+        },
+        "promptType": "define",
+        "hasOutputParser": true
+      },
+      "typeVersion": 1.5
+    },
+    {
+      "id": "invoice-normalize",
+      "name": "Normalize Invoice Output",
+      "type": "n8n-nodes-base.code",
+      "position": [400, 0],
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst raw = item.output || item;\nconst form = $('Submit Invoice').first().json;\nconst str = (v) => v === null || v === undefined ? '' : String(v);\nconst num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };\nconst lineItems = Array.isArray(raw.line_items)\n  ? raw.line_items.map((li) => `${str(li.description)} x${num(li.quantity)} @ ${num(li.unit_price)} = ${num(li.amount)}`).join(' | ')\n  : str(raw.line_items);\nreturn [{\n  json: {\n    submittedBy: form['Your Email'] || '',\n    submittedAt: new Date().toISOString(),\n    vendor_name: str(raw.vendor_name),\n    vendor_email: str(raw.vendor_email),\n    vendor_address: str(raw.vendor_address),\n    invoice_number: str(raw.invoice_number),\n    invoice_date: str(raw.invoice_date),\n    due_date: str(raw.due_date),\n    currency: str(raw.currency),\n    subtotal: num(raw.subtotal),\n    tax: num(raw.tax),\n    total: num(raw.total),\n    payment_terms: str(raw.payment_terms),\n    line_items: lineItems,\n    notes: str(raw.notes)\n  }\n}];"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "invoice-sheets",
+      "name": "Log Invoice to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [600, 0],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.INVOICE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Invoices",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Submitted By": "={{ $json.submittedBy }}",
+            "Submitted At": "={{ $json.submittedAt }}",
+            "Vendor Name": "={{ $json.vendor_name }}",
+            "Vendor Email": "={{ $json.vendor_email }}",
+            "Vendor Address": "={{ $json.vendor_address }}",
+            "Invoice Number": "={{ $json.invoice_number }}",
+            "Invoice Date": "={{ $json.invoice_date }}",
+            "Due Date": "={{ $json.due_date }}",
+            "Currency": "={{ $json.currency }}",
+            "Subtotal": "={{ $json.subtotal }}",
+            "Tax": "={{ $json.tax }}",
+            "Total": "={{ $json.total }}",
+            "Payment Terms": "={{ $json.payment_terms }}",
+            "Line Items": "={{ $json.line_items }}",
+            "Notes": "={{ $json.notes }}",
+            "Status": "=New"
+          }
+        },
+        "options": {}
+      },
+      "typeVersion": 4.5
+    },
+    {
+      "id": "invoice-confirm",
+      "name": "Confirm to Submitter",
+      "type": "n8n-nodes-base.gmail",
+      "position": [800, -100],
+      "parameters": {
+        "sendTo": "={{ $json.submittedBy }}",
+        "subject": "=Invoice {{ $json.invoice_number }} received",
+        "message": "=Hi,\n\nWe received invoice {{ $json.invoice_number }} from {{ $json.vendor_name }} for {{ $json.currency }} {{ $json.total }}.\n\nStatus: New\n\nOur finance team is reviewing it.",
+        "options": {}
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "invoice-finance",
+      "name": "Notify Finance Team",
+      "type": "n8n-nodes-base.gmail",
+      "position": [800, 100],
+      "parameters": {
+        "sendTo": "={{ $env.FINANCE_EMAIL_TO || 'finance@example.com' }}",
+        "subject": "=New invoice {{ $json.invoice_number }} - {{ $json.vendor_name }}",
+        "message": "=Invoice: {{ $json.invoice_number }}\nVendor: {{ $json.vendor_name }}\nDate: {{ $json.invoice_date }}\nDue: {{ $json.due_date }}\nTotal: {{ $json.currency }} {{ $json.total }}\nPayment terms: {{ $json.payment_terms }}\n\nLine items:\n{{ $json.line_items }}",
+        "options": {}
+      },
+      "typeVersion": 2.1
+    }
+  ],
+  "connections": {
+    "Submit Invoice": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from PDF": {
+      "main": [
+        [
+          {
+            "node": "Extract Invoice Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Invoice Data",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Extract Invoice Data",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Invoice Data": {
+      "main": [
+        [
+          {
+            "node": "Normalize Invoice Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Invoice Output": {
+      "main": [
+        [
+          {
+            "node": "Log Invoice to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Invoice to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Confirm to Submitter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Finance Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "v1-ledgerlens-ai",
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
