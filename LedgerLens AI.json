@@ -6,7 +6,10 @@
       "id": "invoice-sticky",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
-      "position": [0, -480],
+      "position": [
+        -400,
+        -500
+      ],
       "parameters": {
         "width": 800,
         "height": 220,
@@ -18,7 +21,10 @@
       "id": "invoice-form",
       "name": "Submit Invoice",
       "type": "n8n-nodes-base.formTrigger",
-      "position": [-200, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
         "formTitle": "Invoice Upload",
         "formDescription": "Upload an invoice PDF for automatic data extraction.",
@@ -26,13 +32,15 @@
           "values": [
             {
               "fieldLabel": "Your Email",
-              "requiredField": true
+              "requiredField": true,
+              "fieldType": "email"
             },
             {
               "fieldType": "file",
               "fieldLabel": "Invoice_File",
               "requiredField": true,
-              "acceptFileTypes": ".pdf"
+              "acceptFileTypes": ".pdf",
+              "multipleFiles": false
             }
           ]
         },
@@ -45,7 +53,10 @@
       "id": "invoice-extract",
       "name": "Extract Text from PDF",
       "type": "n8n-nodes-base.extractFromFile",
-      "position": [0, 0],
+      "position": [
+        720,
+        0
+      ],
       "parameters": {
         "options": {},
         "operation": "pdf",
@@ -57,7 +68,10 @@
       "id": "invoice-model",
       "name": "OpenAI Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "position": [200, -220],
+      "position": [
+        1200,
+        320
+      ],
       "parameters": {
         "model": {
           "__rl": true,
@@ -65,7 +79,8 @@
           "value": "gpt-5.6-luna"
         },
         "options": {
-          "temperature": 0
+          "temperature": 0,
+          "timeout": 30000
         }
       },
       "typeVersion": 1.2
@@ -74,7 +89,10 @@
       "id": "invoice-parser",
       "name": "Structured Output Parser",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
-      "position": [400, -220],
+      "position": [
+        1200,
+        560
+      ],
       "parameters": {
         "schemaType": "manual",
         "inputSchema": "{\"type\":\"object\",\"properties\":{\"vendor_name\":{\"type\":[\"string\",\"null\"]},\"vendor_email\":{\"type\":[\"string\",\"null\"]},\"vendor_address\":{\"type\":[\"string\",\"null\"]},\"invoice_number\":{\"type\":[\"string\",\"null\"]},\"invoice_date\":{\"type\":[\"string\",\"null\"]},\"due_date\":{\"type\":[\"string\",\"null\"]},\"currency\":{\"type\":[\"string\",\"null\"]},\"subtotal\":{\"type\":[\"number\",\"null\"]},\"tax\":{\"type\":[\"number\",\"null\"]},\"total\":{\"type\":[\"number\",\"null\"]},\"payment_terms\":{\"type\":[\"string\",\"null\"]},\"line_items\":{\"type\":[\"array\",\"null\"],\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"quantity\":{\"type\":\"number\"},\"unit_price\":{\"type\":\"number\"},\"amount\":{\"type\":\"number\"}},\"required\":[\"description\",\"quantity\",\"unit_price\",\"amount\"]}},\"notes\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"vendor_name\",\"vendor_email\",\"vendor_address\",\"invoice_number\",\"invoice_date\",\"due_date\",\"currency\",\"subtotal\",\"tax\",\"total\",\"payment_terms\",\"line_items\",\"notes\"]}"
@@ -85,7 +103,10 @@
       "id": "invoice-chain",
       "name": "Extract Invoice Data",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "position": [200, 0],
+      "position": [
+        1200,
+        0
+      ],
       "parameters": {
         "text": "={{ $json.text }}",
         "messages": {
@@ -104,9 +125,12 @@
       "id": "invoice-normalize",
       "name": "Normalize Invoice Output",
       "type": "n8n-nodes-base.code",
-      "position": [400, 0],
+      "position": [
+        1440,
+        0
+      ],
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst raw = item.output || item;\nconst form = $('Submit Invoice').first().json;\nconst str = (v) => v === null || v === undefined ? '' : String(v);\nconst num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };\nconst lineItems = Array.isArray(raw.line_items)\n  ? raw.line_items.map((li) => `${str(li.description)} x${num(li.quantity)} @ ${num(li.unit_price)} = ${num(li.amount)}`).join(' | ')\n  : str(raw.line_items);\nreturn [{\n  json: {\n    submittedBy: form['Your Email'] || '',\n    submittedAt: new Date().toISOString(),\n    vendor_name: str(raw.vendor_name),\n    vendor_email: str(raw.vendor_email),\n    vendor_address: str(raw.vendor_address),\n    invoice_number: str(raw.invoice_number),\n    invoice_date: str(raw.invoice_date),\n    due_date: str(raw.due_date),\n    currency: str(raw.currency),\n    subtotal: num(raw.subtotal),\n    tax: num(raw.tax),\n    total: num(raw.total),\n    payment_terms: str(raw.payment_terms),\n    line_items: lineItems,\n    notes: str(raw.notes)\n  }\n}];"
+        "jsCode": "const raw = $input.first().json.output || $input.first().json;\nconst form = $('Submit Invoice').first().json;\nconst str = v => v == null ? '' : String(v).trim();\nconst num = v => v == null || v === '' ? null : Number(v);\nconst email = str(form['Your Email']);\nif (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) throw new Error('Valid submitter email required');\nif (!str(raw.vendor_name) || !str(raw.invoice_number) || !str(raw.currency) || !Number.isFinite(num(raw.total))) throw new Error('Invoice identity, currency and total required');\nconst key = (str(raw.vendor_name) + '|' + str(raw.invoice_number)).toLowerCase();\nreturn [{json: {invoiceKey: key, runId: String($execution.id), submittedBy: email, submittedAt: new Date().toISOString(),\n  vendor_name: str(raw.vendor_name), vendor_email: str(raw.vendor_email), vendor_address: str(raw.vendor_address),\n  invoice_number: str(raw.invoice_number), invoice_date: str(raw.invoice_date), due_date: str(raw.due_date),\n  currency: str(raw.currency).toUpperCase(), subtotal: num(raw.subtotal), tax: num(raw.tax), total: num(raw.total),\n  payment_terms: str(raw.payment_terms), line_items: JSON.stringify(raw.line_items || []), notes: str(raw.notes)}}];"
       },
       "typeVersion": 2
     },
@@ -114,9 +138,12 @@
       "id": "invoice-sheets",
       "name": "Log Invoice to Google Sheets",
       "type": "n8n-nodes-base.googleSheets",
-      "position": [600, 0],
+      "position": [
+        2640,
+        0
+      ],
       "parameters": {
-        "operation": "append",
+        "operation": "appendOrUpdate",
         "documentId": {
           "__rl": true,
           "value": "={{ $env.INVOICE_SHEET_ID }}",
@@ -145,8 +172,13 @@
             "Payment Terms": "={{ $json.payment_terms }}",
             "Line Items": "={{ $json.line_items }}",
             "Notes": "={{ $json.notes }}",
-            "Status": "=New"
-          }
+            "Status": "=New",
+            "Invoice Key": "={{ $json.invoiceKey }}",
+            "Run ID": "={{ $json.runId }}"
+          },
+          "matchingColumns": [
+            "Invoice Key"
+          ]
         },
         "options": {}
       },
@@ -156,11 +188,14 @@
       "id": "invoice-confirm",
       "name": "Confirm to Submitter",
       "type": "n8n-nodes-base.gmail",
-      "position": [800, -100],
+      "position": [
+        3360,
+        0
+      ],
       "parameters": {
-        "sendTo": "={{ $json.submittedBy }}",
-        "subject": "=Invoice {{ $json.invoice_number }} received",
-        "message": "=Hi,\n\nWe received invoice {{ $json.invoice_number }} from {{ $json.vendor_name }} for {{ $json.currency }} {{ $json.total }}.\n\nStatus: New\n\nOur finance team is reviewing it.",
+        "sendTo": "={{ $('Normalize Invoice Output').first().json.submittedBy }}",
+        "subject": "=Invoice {{ $('Normalize Invoice Output').first().json.invoice_number }} received",
+        "message": "=Hi,\n\nWe received invoice {{ $('Normalize Invoice Output').first().json.invoice_number }} from {{ $('Normalize Invoice Output').first().json.vendor_name }} for {{ $('Normalize Invoice Output').first().json.currency }} {{ $('Normalize Invoice Output').first().json.total }}.\n\nStatus: New\n\nOur finance team is reviewing it.",
         "options": {}
       },
       "typeVersion": 2.1
@@ -169,14 +204,218 @@
       "id": "invoice-finance",
       "name": "Notify Finance Team",
       "type": "n8n-nodes-base.gmail",
-      "position": [800, 100],
+      "position": [
+        3600,
+        0
+      ],
       "parameters": {
-        "sendTo": "={{ $env.FINANCE_EMAIL_TO || 'finance@example.com' }}",
-        "subject": "=New invoice {{ $json.invoice_number }} - {{ $json.vendor_name }}",
-        "message": "=Invoice: {{ $json.invoice_number }}\nVendor: {{ $json.vendor_name }}\nDate: {{ $json.invoice_date }}\nDue: {{ $json.due_date }}\nTotal: {{ $json.currency }} {{ $json.total }}\nPayment terms: {{ $json.payment_terms }}\n\nLine items:\n{{ $json.line_items }}",
+        "sendTo": "={{ $env.FINANCE_EMAIL_TO }}",
+        "subject": "=New invoice {{ $('Normalize Invoice Output').first().json.invoice_number }} - {{ $('Normalize Invoice Output').first().json.vendor_name }}",
+        "message": "=Invoice: {{ $('Normalize Invoice Output').first().json.invoice_number }}\nVendor: {{ $('Normalize Invoice Output').first().json.vendor_name }}\nDate: {{ $('Normalize Invoice Output').first().json.invoice_date }}\nDue: {{ $('Normalize Invoice Output').first().json.due_date }}\nTotal: {{ $('Normalize Invoice Output').first().json.currency }} {{ $('Normalize Invoice Output').first().json.total }}\nPayment terms: {{ $('Normalize Invoice Output').first().json.payment_terms }}\n\nLine items:\n{{ $('Normalize Invoice Output').first().json.line_items }}",
         "options": {}
       },
       "typeVersion": 2.1
+    },
+    {
+      "id": "preflight",
+      "name": "Preflight",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const env = $env;\nconst enabled = env.LEDGERLENS_ENABLED === 'true';\nconst dryRun = env.LEDGERLENS_DRY_RUN !== 'false';\nconst required = [\"INVOICE_SHEET_ID\", \"FINANCE_EMAIL_TO\", \"LEDGERLENS_ALERT_EMAIL_TO\"];\nif (enabled && !dryRun) {\n  const missing = required.filter(key => !String(env[key] || '').trim());\n  if (missing.length) throw new Error('Missing configuration: ' + missing.join(', '));\n}\nif (enabled && !dryRun) {\n  const email = String($input.first().json['Your Email'] || '');\n  const file = $input.first().binary?.Invoice_File;\n  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) throw new Error('Valid submitter email required');\n  if (!file || file.mimeType !== 'application/pdf') throw new Error('PDF invoice required');\n}\nconst runId = String($execution.id);\nconst status = !enabled ? 'disabled' : dryRun ? 'dry_run' : 'running';\nconsole.log(JSON.stringify({timestamp: new Date().toISOString(), runId, workflow: 'LEDGERLENS', status}));\nconst first = $input.first();\nreturn [{json: {...first.json, runId, status, runLive: status === 'running'}, ...(first.binary ? {binary: first.binary} : {})}];"
+      }
+    },
+    {
+      "id": "run-live?",
+      "name": "Run live?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "live-run",
+              "leftValue": "={{ $json.runLive }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "stopped-or-dry-run",
+      "name": "Stopped or dry run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -300
+      ],
+      "parameters": {
+        "jsCode": "console.log(JSON.stringify({timestamp: new Date().toISOString(), runId: $json.runId, result: $json.status})); return [{json: {status: $json.status, runId: $json.runId}}];"
+      }
+    },
+    {
+      "id": "find-existing-invoices",
+      "name": "Find existing invoices",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1680,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.INVOICE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Invoices",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Invoice Key",
+              "lookupValue": "={{ $json.invoiceKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "new-invoices?",
+      "name": "New invoices?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "new-record",
+              "leftValue": "={{ !$json['Invoice Key'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "restore-input-for-invoices",
+      "name": "Restore input for invoices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{json: $('Normalize Invoice Output').first().json}];"
+      }
+    },
+    {
+      "id": "already-recorded",
+      "name": "Already recorded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -300
+      ],
+      "parameters": {
+        "jsCode": "return [{json: {status:'already_recorded', runId:String($execution.id)}}];"
+      }
+    },
+    {
+      "id": "restore-normalize-invoice-output",
+      "name": "Restore Normalize Invoice Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{json: $('Normalize Invoice Output').item.json}];"
+      }
+    },
+    {
+      "id": "audit-confirm-to-submitter",
+      "name": "Audit confirm to submitter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        0
+      ],
+      "parameters": {
+        "jsCode": "console.log(JSON.stringify({timestamp:new Date().toISOString(), runId:String($execution.id), result:'sent', action:'Confirm to Submitter'})); return $input.all();"
+      }
+    },
+    {
+      "id": "audit-notify-finance-team",
+      "name": "Audit notify finance team",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "console.log(JSON.stringify({timestamp:new Date().toISOString(), runId:String($execution.id), result:'sent', action:'Notify Finance Team'})); return $input.all();"
+      }
+    },
+    {
+      "id": "audit-log-invoice-to-google-sheets",
+      "name": "Audit log invoice to google sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "console.log(JSON.stringify({timestamp:new Date().toISOString(), runId:String($execution.id), result:'recorded', action:'Log Invoice to Google Sheets'})); return $input.all();"
+      }
     }
   ],
   "connections": {
@@ -184,7 +423,7 @@
       "main": [
         [
           {
-            "node": "Extract Text from PDF",
+            "node": "Preflight",
             "type": "main",
             "index": 0
           }
@@ -239,7 +478,7 @@
       "main": [
         [
           {
-            "node": "Log Invoice to Google Sheets",
+            "node": "Find existing invoices",
             "type": "main",
             "index": 0
           }
@@ -247,6 +486,86 @@
       ]
     },
     "Log Invoice to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Audit log invoice to google sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preflight": {
+      "main": [
+        [
+          {
+            "node": "Run live?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run live?": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stopped or dry run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find existing invoices": {
+      "main": [
+        [
+          {
+            "node": "New invoices?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New invoices?": {
+      "main": [
+        [
+          {
+            "node": "Restore input for invoices",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already recorded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore input for invoices": {
+      "main": [
+        [
+          {
+            "node": "Log Invoice to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Normalize Invoice Output": {
       "main": [
         [
           {
@@ -261,12 +580,50 @@
           }
         ]
       ]
+    },
+    "Confirm to Submitter": {
+      "main": [
+        [
+          {
+            "node": "Audit confirm to submitter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Finance Team": {
+      "main": [
+        [
+          {
+            "node": "Audit notify finance team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit log invoice to google sheets": {
+      "main": [
+        [
+          {
+            "node": "Restore Normalize Invoice Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
   "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila",
+    "executionTimeout": 300,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true
   },
   "versionId": "v1-ledgerlens-ai",
   "tags": [],

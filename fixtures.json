@@ -1,0 +1,12 @@
+{
+  "valid": {
+    "Your Email": "sample@example.test"
+  },
+  "empty": {},
+  "already_done": {
+    "Invoice Key": "sample vendor|inv-001"
+  },
+  "network_down": {
+    "error": "ECONNRESET"
+  }
+}
