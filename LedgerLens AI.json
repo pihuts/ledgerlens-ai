@@ -268,7 +268,7 @@
       "typeVersion": 2,
       "position": [
         960,
-        0
+        -300
       ],
       "parameters": {
         "jsCode": "console.log(JSON.stringify({timestamp: new Date().toISOString(), runId: $json.runId, result: $json.status})); return [{json: {status: $json.status, runId: $json.runId}}];"
@@ -359,7 +359,7 @@
       "typeVersion": 2,
       "position": [
         2400,
-        0
+        -300
       ],
       "parameters": {
         "jsCode": "return [{json: {status:'already_recorded', runId:String($execution.id)}}];"
